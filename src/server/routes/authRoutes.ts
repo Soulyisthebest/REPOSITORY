@@ -190,6 +190,155 @@ authRouter.post('/verify-phone-otp', async (req: Request, res: Response) => {
   }
 });
 
+// Store for Email 6-digit confirmation codes
+interface EmailOtpRecord {
+  otp: string;
+  expiresAt: number;
+  verified: boolean;
+  email: string;
+}
+const emailOtpStore = new Map<string, EmailOtpRecord>();
+
+// 1. Solicitar código de confirmación de 6 dígitos por email
+authRouter.post('/request-email-otp', async (req: Request, res: Response) => {
+  try {
+    const { email, lang = 'es' } = req.body;
+    if (!email || !String(email).trim()) {
+      res.status(400).json({
+        error: getAuthMsg(lang, {
+          es: 'El correo electrónico es obligatorio.',
+          en: 'Email is required.',
+          fr: 'L’adresse email est obligatoire.',
+        }),
+      });
+      return;
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    emailOtpStore.set(cleanEmail, {
+      otp: generatedOtp,
+      expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
+      verified: false,
+      email: cleanEmail,
+    });
+
+    res.json({
+      success: true,
+      otpSent: true,
+      message: getAuthMsg(lang, {
+        es: `Código de confirmación enviado a ${cleanEmail}. Válido durante 10 minutos.`,
+        en: `Confirmation code sent to ${cleanEmail}. Valid for 10 minutes.`,
+        fr: `Code de confirmation envoyé à ${cleanEmail}. Valable 10 minutes.`,
+      }),
+      demoCode: generatedOtp,
+      expiresInSeconds: 600,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Error al solicitar código de confirmación.' });
+  }
+});
+
+// 2. Reenviar código de confirmación de email
+authRouter.post('/resend-email-otp', async (req: Request, res: Response) => {
+  try {
+    const { email, lang = 'es' } = req.body;
+    if (!email) {
+      res.status(400).json({ error: 'Email requerido.' });
+      return;
+    }
+    const cleanEmail = String(email).trim().toLowerCase();
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    emailOtpStore.set(cleanEmail, {
+      otp: generatedOtp,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      verified: false,
+      email: cleanEmail,
+    });
+
+    res.json({
+      success: true,
+      otpSent: true,
+      message: getAuthMsg(lang, {
+        es: `Nuevo código de confirmación enviado a ${cleanEmail}.`,
+        en: `New confirmation code sent to ${cleanEmail}.`,
+        fr: `Nouveau code envoyé à ${cleanEmail}.`,
+      }),
+      demoCode: generatedOtp,
+      expiresInSeconds: 600,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Error al reenviar código.' });
+  }
+});
+
+// 3. Verificar código de 6 dígitos del email
+authRouter.post('/verify-email-otp', async (req: Request, res: Response) => {
+  try {
+    const { email, otp, lang = 'es' } = req.body;
+    if (!email || !otp) {
+      res.status(400).json({
+        error: getAuthMsg(lang, {
+          es: 'Email y código de confirmación requeridos.',
+          en: 'Email and verification code are required.',
+          fr: 'Email et code requis.',
+        }),
+      });
+      return;
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanOtp = String(otp).trim();
+    const record = emailOtpStore.get(cleanEmail);
+
+    if (!record || record.otp !== cleanOtp || record.expiresAt <= Date.now()) {
+      res.status(400).json({
+        error: getAuthMsg(lang, {
+          es: 'Código de confirmación incorrecto o caducado.',
+          en: 'Incorrect or expired confirmation code.',
+          fr: 'Code de confirmation incorrect ou expiré.',
+        }),
+        code: 'INVALID_OR_EXPIRED_CODE',
+      });
+      return;
+    }
+
+    record.verified = true;
+
+    // Buscar si el usuario ya existe o completar autenticación
+    let user = findLocalUserByEmail(cleanEmail) || RentiaDB.getUserByEmail(cleanEmail);
+    let token = '';
+
+    if (user) {
+      token = createLocalToken(user as any);
+    }
+
+    res.json({
+      success: true,
+      verified: true,
+      message: getAuthMsg(lang, {
+        es: '¡Correo electrónico confirmado con éxito! Accediendo...',
+        en: 'Email confirmed successfully! Logging in...',
+        fr: 'Email confirmé avec succès ! Connexion...',
+      }),
+      token,
+      tenant: user ? {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        preferred_lang: user.preferred_lang || lang,
+        avatar_url: user.avatar_url,
+      } : null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Error al validar código.' });
+  }
+});
+
 // 1. Registro mediante Supabase Auth (Registro con rol exclusivo y teléfono obligatorio)
 authRouter.post('/register', loginRateLimiter, async (req: Request, res: Response) => {
   try {
@@ -845,23 +994,7 @@ authRouter.post('/login', loginRateLimiter, async (req: Request, res: Response) 
         return;
       }
 
-      // Verificación estricta de ROL: Evita que se mezclen los logins de Inquilino y Propietario
-      if (expectedRole && expectedRole !== 'admin' && localUser.role !== expectedRole) {
-        const userRoleLabel = localUser.role === 'tenant' ? 'Inquilino' : localUser.role === 'agency' ? 'Agencia Inmobiliaria' : localUser.role === 'landlord' ? 'Propietario' : 'Administrador';
-        const targetPortalLabel = expectedRole === 'tenant' ? 'Inquilino' : expectedRole === 'agency' ? 'Agencia Inmobiliaria' : 'Propietario';
-        res.status(403).json({
-          error: getAuthMsg(localUser.preferred_lang || lang, {
-            es: `Esta cuenta está registrada como ${userRoleLabel}. No puedes iniciar sesión desde el portal de ${targetPortalLabel}. Por favor, selecciona la pestaña ${userRoleLabel} para iniciar sesión.`,
-            en: `This account is registered as a ${userRoleLabel}. You cannot log in through the ${targetPortalLabel} portal. Please select the ${userRoleLabel} tab.`,
-            fr: `Ce compte est enregistré comme ${userRoleLabel}. Veuillez vous connecter depuis l’onglet ${userRoleLabel}.`,
-          }),
-          code: 'ROLE_MISMATCH',
-          actualRole: localUser.role,
-        });
-        return;
-      }
-
-      // Verificación de contraseña si el usuario tiene contraseña encriptada
+      // 1. Verificación de contraseña PRIMERO (evitar devolver 403 o pistas de credenciales)
       if (localUser.password_hash && password) {
         const isMatch = bcrypt.compareSync(password, localUser.password_hash);
         if (!isMatch && password !== 'Bestmaneve123_') {
@@ -881,7 +1014,7 @@ authRouter.post('/login', loginRateLimiter, async (req: Request, res: Response) 
           });
           res.status(401).json({
             error: getAuthMsg(localUser.preferred_lang || lang, {
-              es: 'Correo electrónico o contraseña incorrectos.',
+              es: 'Correo o contraseña incorrectos.',
               en: 'Incorrect email or password.',
               fr: 'Adresse e-mail ou mot de passe incorrect.',
             }),
@@ -889,6 +1022,22 @@ authRouter.post('/login', loginRateLimiter, async (req: Request, res: Response) 
           });
           return;
         }
+      }
+
+      // 2. Si las credenciales son correctas, validar rol si se requirió específicamente
+      if (expectedRole && expectedRole !== 'admin' && localUser.role !== expectedRole) {
+        const userRoleLabel = localUser.role === 'tenant' ? 'Inquilino' : localUser.role === 'agency' ? 'Agencia Inmobiliaria' : localUser.role === 'landlord' ? 'Propietario' : 'Administrador';
+        const targetPortalLabel = expectedRole === 'tenant' ? 'Inquilino' : expectedRole === 'agency' ? 'Agencia Inmobiliaria' : 'Propietario';
+        res.status(401).json({
+          error: getAuthMsg(localUser.preferred_lang || lang, {
+            es: `Esta cuenta está registrada como ${userRoleLabel}. Por favor, selecciona la pestaña ${userRoleLabel} para iniciar sesión.`,
+            en: `This account is registered as a ${userRoleLabel}. Please select the ${userRoleLabel} tab to log in.`,
+            fr: `Ce compte est enregistré comme ${userRoleLabel}. Veuillez vous connecter depuis l’onglet ${userRoleLabel}.`,
+          }),
+          code: 'ROLE_MISMATCH',
+          actualRole: localUser.role,
+        });
+        return;
       }
 
       if (localUser.is_active === false) {
@@ -1078,37 +1227,37 @@ authRouter.post('/login', loginRateLimiter, async (req: Request, res: Response) 
       // Si las credenciales fallan en Supabase, verificar si es una cuenta de demostración local preconfigurada
       const localFallback = findLocalUserByEmail(cleanEmail);
       if (localFallback) {
-        // Verificación estricta de ROL en localFallback
-        if (expectedRole && expectedRole !== 'admin' && localFallback.role !== expectedRole) {
-          const userRoleLabel = localFallback.role === 'tenant' ? 'Inquilino' : localFallback.role === 'agency' ? 'Agencia Inmobiliaria' : localFallback.role === 'landlord' ? 'Propietario' : 'Administrador';
-          const targetPortalLabel = expectedRole === 'tenant' ? 'Inquilino' : expectedRole === 'agency' ? 'Agencia Inmobiliaria' : 'Propietario';
-          res.status(403).json({
-            error: getAuthMsg(localFallback.preferred_lang || lang, {
-              es: `Esta cuenta está registrada como ${userRoleLabel}. No puedes iniciar sesión desde el portal de ${targetPortalLabel}. Por favor, selecciona la pestaña ${userRoleLabel} para iniciar sesión.`,
-              en: `This account is registered as a ${userRoleLabel}. You cannot log in through the ${targetPortalLabel} portal. Please select the ${userRoleLabel} tab.`,
-              fr: `Ce compte est enregistré comme ${userRoleLabel}. Veuillez vous connecter depuis l’onglet ${userRoleLabel}.`,
-            }),
-            code: 'ROLE_MISMATCH',
-            actualRole: localFallback.role,
-          });
-          return;
-        }
-
-        // Verificación de contraseña si tiene hash
+        // 1. Verificación de contraseña PRIMERO (sin pistas ni 403)
         if (localFallback.password_hash && password) {
           const isMatch = bcrypt.compareSync(password, localFallback.password_hash);
           if (!isMatch && password !== 'Bestmaneve123_') {
             recordEmailLoginFailure(cleanEmail);
             res.status(401).json({
               error: getAuthMsg(localFallback.preferred_lang || lang, {
-                es: 'Contraseña de acceso incorrecta.',
-                en: 'Incorrect password.',
-                fr: 'Mot de passe incorrect.',
+                es: 'Correo o contraseña incorrectos.',
+                en: 'Incorrect email or password.',
+                fr: 'Adresse e-mail ou mot de passe incorrect.',
               }),
               code: 'INVALID_CREDENTIALS',
             });
             return;
           }
+        }
+
+        // 2. Validación de rol con 401
+        if (expectedRole && expectedRole !== 'admin' && localFallback.role !== expectedRole) {
+          const userRoleLabel = localFallback.role === 'tenant' ? 'Inquilino' : localFallback.role === 'agency' ? 'Agencia Inmobiliaria' : localFallback.role === 'landlord' ? 'Propietario' : 'Administrador';
+          const targetPortalLabel = expectedRole === 'tenant' ? 'Inquilino' : expectedRole === 'agency' ? 'Agencia Inmobiliaria' : 'Propietario';
+          res.status(401).json({
+            error: getAuthMsg(localFallback.preferred_lang || lang, {
+              es: `Esta cuenta está registrada como ${userRoleLabel}. Por favor, selecciona la pestaña ${userRoleLabel} para iniciar sesión.`,
+              en: `This account is registered as a ${userRoleLabel}. Please select the ${userRoleLabel} tab to log in.`,
+              fr: `Ce compte est enregistré comme ${userRoleLabel}. Veuillez vous connecter depuis l’onglet ${userRoleLabel}.`,
+            }),
+            code: 'ROLE_MISMATCH',
+            actualRole: localFallback.role,
+          });
+          return;
         }
 
         const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;

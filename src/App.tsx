@@ -11,7 +11,8 @@ import { LandlordFastVerification } from './components/LandlordFastVerification'
 import { PublicLandlordInspection } from './components/PublicLandlordInspection';
 import { OfficialCertificatePrint } from './components/OfficialCertificatePrint';
 import { UnifiedPassportAndCertificate } from './components/UnifiedPassportAndCertificate';
-import { IdealistaMapSearch } from './components/IdealistaMapSearch';
+import { PropertyMapSearch } from './components/PropertyMapSearch';
+import { PublicProfileView } from './components/PublicProfileView';
 import { NotificationPermissionModal } from './components/NotificationPermissionModal';
 import { SwipeDiscovery } from './components/SwipeDiscovery';
 import { LandlordSwipeDiscovery } from './components/LandlordSwipeDiscovery';
@@ -64,6 +65,7 @@ export default function App() {
 
   const [currentView, setCurrentView] = useState<ViewMode>('matching_discovery');
   const [hasDeepLink, setHasDeepLink] = useState(false);
+  const [publicProfileCode, setPublicProfileCode] = useState<string | null>(null);
 
   // Modals state
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
@@ -89,15 +91,27 @@ export default function App() {
     }
   }, [language, t.isRtl]);
 
-  // Deep Link URL detection on app mount (?code=VAL784, ?inspect=1, ?view=cert)
+  // Deep Link URL detection on app mount (?code=VAL784, ?inspect=1, ?view=cert, /p/:code, /admin)
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      const pathname = window.location.pathname;
       const params = new URLSearchParams(window.location.search);
       const codeParam = params.get('code') || params.get('validate');
       const inspectParam = params.get('inspect') || params.get('public');
       const viewParam = params.get('view');
+      const pParam = params.get('p') || params.get('profile');
 
-      if (codeParam || viewParam === 'verify') {
+      // Check for /p/:code in pathname
+      const pMatch = pathname.match(/^\/p\/([a-zA-Z0-9_-]+)/);
+      const profileCode = pMatch ? pMatch[1] : pParam;
+
+      if (profileCode) {
+        setPublicProfileCode(profileCode);
+        setHasDeepLink(true);
+        setCurrentView('public_profile');
+      } else if (pathname === '/admin' || pathname === '/admin/' || viewParam === 'admin') {
+        setCurrentView('admin_panel');
+      } else if (codeParam || viewParam === 'verify') {
         setHasDeepLink(true);
         setCurrentView('landlord_verify_flow');
       } else if (inspectParam === '1' || viewParam === 'landlord' || viewParam === 'public') {
@@ -618,14 +632,14 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className={currentView === 'idealista_map_search' ? "flex-1 w-full p-0 flex flex-col" : "flex-1 max-w-xl sm:max-w-3xl w-full mx-auto px-4 py-5 space-y-4"}>
+      <main className={(currentView === 'property_map_search' || currentView === 'idealista_map_search') ? "flex-1 w-full p-0 flex flex-col" : "flex-1 max-w-xl sm:max-w-3xl w-full mx-auto px-4 py-5 space-y-4"}>
         
         {/* ================================================================ */}
-        {/* SHARED MAP VIEW (Accessible to Landlords, Agencies & Tenants) */}
+        {/* SHARED MAP VIEW (OpenStreetMap + Leaflet) (Requisito 5) */}
         {/* ================================================================ */}
-        {currentView === 'idealista_map_search' && (
+        {(currentView === 'property_map_search' || currentView === 'idealista_map_search') && (
           <ErrorBoundary fallbackTitle="Mapa de búsqueda de viviendas en España">
-            <IdealistaMapSearch
+            <PropertyMapSearch
               language={language}
               isLandlord={isLandlord}
               currentUser={currentUser}
@@ -840,6 +854,21 @@ export default function App() {
             onBackToPassport={() => setHasDeepLink(false)}
             onLogout={handleLogout}
             language={language}
+          />
+        )}
+
+        {/* ================================================================ */}
+        {/* PUBLIC PROFILE VIEW (QR code /p/:code) (Requisito 6) */}
+        {/* ================================================================ */}
+        {currentView === 'public_profile' && (
+          <PublicProfileView
+            profileCode={publicProfileCode || 'REN-01'}
+            language={language}
+            onOpenLogin={() => {
+              setAuthSelectedRole('tenant');
+              setAuthInitialMode('login');
+              setIsAuthModalOpen(true);
+            }}
           />
         )}
 

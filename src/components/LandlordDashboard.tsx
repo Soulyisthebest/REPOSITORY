@@ -122,7 +122,10 @@ export const LandlordDashboard: React.FC<LandlordDashboardProps> = ({
     });
   };
 
-  const landlordQrUrl = `https://rentiapassport.org/landlord/${currentUser?.id || 'verified'}`;
+  const profileCode = currentUser?.id ? `PROP-${currentUser.id.substring(0, 4).toUpperCase()}` : 'PROP-DEMO';
+  const landlordQrUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/p/${profileCode}`
+    : `https://rentia.es/p/${profileCode}`;
 
   const isLandlordVerified = currentUser?.is_verified || currentUser?.verification_status === 'verified';
 
@@ -1133,13 +1136,33 @@ export const LandlordDashboard: React.FC<LandlordDashboardProps> = ({
               </label>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowProfileConfigModal(false)}
-              className="w-full py-2.5 bg-[#0FA3A3] hover:bg-[#0d8c8c] text-white rounded-xl text-xs font-bold transition-all"
-            >
-              Guardar preferencias
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await api.public.updateProfileVisibility({
+                      show_phone: landlordCharacteristics.showPhone,
+                      show_email: landlordCharacteristics.showEmail,
+                      show_listings: landlordCharacteristics.showPropertiesCount,
+                    });
+                  } catch {}
+                  setShowProfileConfigModal(false);
+                }}
+                className="flex-1 py-2.5 bg-[#0FA3A3] hover:bg-[#0d8c8c] text-white rounded-xl text-xs font-bold transition-all"
+              >
+                Guardar preferencias
+              </button>
+              <a
+                href={landlordQrUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-[#1E1B4B] rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1"
+                title="Abrir y probar perfil público"
+              >
+                Probar QR
+              </a>
+            </div>
           </div>
         </div>
       )}

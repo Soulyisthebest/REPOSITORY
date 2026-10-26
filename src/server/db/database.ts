@@ -85,6 +85,7 @@ export interface UserRecord {
   preferred_lang?: string;
   avatar_url?: string;
   trust_score?: number;
+  profile_visibility?: Record<string, boolean>;
   created_at: string;
   updated_at?: string;
 }
@@ -96,6 +97,7 @@ export interface TenantProfileRecord {
   name: string;
   full_name?: string;
   phone?: string;
+  profile_visibility?: Record<string, boolean>;
   birth_date?: string;
   age?: number;
   nationality?: string;
@@ -1364,6 +1366,39 @@ export const RentiaDB = {
       return true;
     });
     saveDatabase();
+  },
+
+  getProfileVisibility(userIdOrEmail: string): Record<string, boolean> {
+    const clean = userIdOrEmail.trim().toLowerCase();
+    const user = databaseCache.users.find((u) => u.id === userIdOrEmail || u.email.toLowerCase() === clean);
+    const tenant = databaseCache.tenant_profiles.find((t) => t.user_id === userIdOrEmail || t.id === userIdOrEmail || t.email.toLowerCase() === clean);
+    const stored = user?.profile_visibility || tenant?.profile_visibility;
+    return stored || {
+      show_full_name: true,
+      show_email: false,
+      show_phone: false,
+      show_income: true,
+      show_employment: true,
+      show_bio: true,
+      show_reviews: true,
+      show_listings: true,
+      show_photos: true,
+      show_trust_score: true,
+    };
+  },
+
+  updateProfileVisibility(userIdOrEmail: string, visibility: Record<string, boolean>): Record<string, boolean> {
+    const clean = userIdOrEmail.trim().toLowerCase();
+    const user = databaseCache.users.find((u) => u.id === userIdOrEmail || u.email.toLowerCase() === clean);
+    if (user) {
+      user.profile_visibility = { ...(user.profile_visibility || {}), ...visibility };
+    }
+    const tenant = databaseCache.tenant_profiles.find((t) => t.user_id === userIdOrEmail || t.id === userIdOrEmail || t.email.toLowerCase() === clean);
+    if (tenant) {
+      tenant.profile_visibility = { ...(tenant.profile_visibility || {}), ...visibility };
+    }
+    saveDatabase();
+    return this.getProfileVisibility(userIdOrEmail);
   },
 
   getUserDetailedProfile(userId: string) {

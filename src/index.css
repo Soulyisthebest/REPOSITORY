@@ -83,12 +83,12 @@
   border: none !important;
 }
 
-.custom-leaflet-price-pin:hover .idealista-marker-pin {
+.custom-leaflet-price-pin:hover .rentia-marker-pin {
   transform: scale(1.1);
   z-index: 999;
 }
 
-.idealista-marker-pin {
+.rentia-marker-pin {
   user-select: none;
   -webkit-user-select: none;
 }

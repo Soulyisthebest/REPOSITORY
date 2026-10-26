@@ -368,6 +368,7 @@ export type ViewMode =
   | 'landlord_public_view' 
   | 'certificate_export' 
   | 'matching_discovery' 
+  | 'property_map_search'
   | 'idealista_map_search'
   | 'landlord_listings' 
   | 'landlord_dashboard' 
@@ -376,7 +377,8 @@ export type ViewMode =
   | 'admin_panel' 
   | 'tenant_likes'
   | 'landlord_swipe'
-  | 'landlord_likes';
+  | 'landlord_likes'
+  | 'public_profile';
 
 export interface ReportItem {
   id: string;

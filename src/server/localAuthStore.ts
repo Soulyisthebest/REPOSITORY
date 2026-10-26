@@ -304,15 +304,25 @@ export function verifyLocalToken(token: string): LocalUser | null {
   }
 }
 
-export function deleteLocalUser(userIdOrEmail: string): boolean {
-  const clean = userIdOrEmail.trim().toLowerCase();
+export function deleteLocalUser(userIdOrEmailOrPhone: string): boolean {
+  const clean = userIdOrEmailOrPhone.trim().toLowerCase();
+  const cleanPhone = userIdOrEmailOrPhone.replace(/[\s\-\(\)\.]/g, '').trim();
+  let found = false;
+
   for (const [email, user] of localUsers.entries()) {
-    if (user.id === userIdOrEmail || email.toLowerCase() === clean || user.email.toLowerCase() === clean) {
+    const userPhoneClean = user.phone ? user.phone.replace(/[\s\-\(\)\.]/g, '').trim() : '';
+    if (
+      user.id === userIdOrEmailOrPhone ||
+      email.toLowerCase() === clean ||
+      user.email.toLowerCase() === clean ||
+      (cleanPhone.length >= 8 && userPhoneClean === cleanPhone)
+    ) {
       localUsers.delete(email);
       RentiaDB.deleteUserPermanently(user.id);
-      return true;
+      found = true;
     }
   }
-  RentiaDB.deleteUserPermanently(userIdOrEmail);
-  return true;
+
+  RentiaDB.deleteUserPermanently(userIdOrEmailOrPhone);
+  return found;
 }

@@ -106,8 +106,9 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* CENTER ROLE-AWARE NAVIGATION */}
-        <nav className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-stone-200/80 shadow-xs">
+        {/* CENTER ROLE-AWARE NAVIGATION (Solo tras iniciar sesión) */}
+        {currentUser && (
+          <nav className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-stone-200/80 shadow-xs">
           
           {/* LANDLORD TABS (Strictly isolated: no tenant screens) */}
           {isLandlord ? (
@@ -184,9 +185,9 @@ export const Header: React.FC<HeaderProps> = ({
 
               {/* Tab 5: Mapa de Inmuebles en España (Con gestión 1-clic de estado para Propietarios y Agencias) */}
               <button
-                onClick={() => navigateView('idealista_map_search')}
+                onClick={() => navigateView('property_map_search')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                  currentView === 'idealista_map_search'
+                  currentView === 'property_map_search' || currentView === 'idealista_map_search'
                     ? 'bg-[#1E1B4B] text-white shadow-xs'
                     : 'text-stone-600 hover:text-[#1E1B4B] hover:bg-stone-50'
                 }`}
@@ -216,9 +217,9 @@ export const Header: React.FC<HeaderProps> = ({
 
               {/* Tab 2: Mapa (Provincias, Proximidad, Dibujo de zona) */}
               <button
-                onClick={() => navigateView('idealista_map_search')}
+                onClick={() => navigateView('property_map_search')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                  currentView === 'idealista_map_search'
+                  currentView === 'property_map_search' || currentView === 'idealista_map_search'
                     ? 'bg-[#1E1B4B] text-white shadow-xs'
                     : 'text-stone-600 hover:text-[#1E1B4B] hover:bg-stone-50'
                 }`}
@@ -274,6 +275,7 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
         </nav>
+        )}
 
         {/* RIGHT ACCOUNT & LANGUAGE CONTROLS */}
         <div className="flex items-center gap-2">

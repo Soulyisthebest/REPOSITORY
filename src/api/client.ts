@@ -207,6 +207,24 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+
+    requestEmailOtp: (payload: { email: string; lang?: string }) =>
+      request<{ success: boolean; otpSent: boolean; message: string; demoCode?: string; expiresInSeconds?: number }>('/auth/request-email-otp', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+
+    resendEmailOtp: (payload: { email: string; lang?: string }) =>
+      request<{ success: boolean; otpSent: boolean; message: string; demoCode?: string; expiresInSeconds?: number }>('/auth/resend-email-otp', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+
+    verifyEmailOtp: (payload: { email: string; otp: string; lang?: string }) =>
+      request<{ success: boolean; verified: boolean; message: string; token?: string; tenant?: any }>('/auth/verify-email-otp', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
   },
 
   // Tenant profile endpoints
@@ -394,6 +412,23 @@ export const api = {
         longitude: number;
         source: string;
       }>('/public/detect-location'),
+
+    getPublicProfile: (code: string) =>
+      request<{
+        success: boolean;
+        profile: any;
+        visibility: Record<string, boolean>;
+      }>(`/public/profile/${encodeURIComponent(code)}`),
+
+    updateProfileVisibility: (visibility: Record<string, boolean>) =>
+      request<{
+        success: boolean;
+        message: string;
+        visibility: Record<string, boolean>;
+      }>('/public/profile-visibility', {
+        method: 'PUT',
+        body: JSON.stringify({ visibility }),
+      }),
   },
 
   matching: {

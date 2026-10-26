@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { calculateMatchRanking, recordRentiaPointsEvent } from '../rankingEngine';
 import { getSupabase, isSupabaseConfigured } from '../supabase';
-import { requireTenantAuth, AuthenticatedRequest } from '../middleware/auth';
+import { requireTenantAuth, optionalTenantAuth, AuthenticatedRequest } from '../middleware/auth';
 import { getMsg, getReqLang } from '../utils/i18n';
 import { RentiaDB, logSupabaseWriteFailure } from '../db/database';
 import { SEED_LISTINGS } from '../../data/seedListings';
@@ -103,8 +103,12 @@ export function calculateHaversineDistanceKm(lat1: number, lon1: number, lat2: n
  * - Filtrado de anuncios de prueba (is_test) por defecto: nunca se confunden con anuncios reales
  * - Restricción a las 8 ciudades autorizadas de Andalucía
  */
-matchingRouter.get('/listings', async (req: Request, res: Response) => {
+matchingRouter.get('/listings', optionalTenantAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const isLandlordOrAgency = req.tenant?.role === 'landlord' || req.tenant?.role === 'agency';
+    const myId = req.tenant?.id;
+    const myEmail = req.tenant?.email?.toLowerCase();
+
     const cityFilter = req.query.city ? String(req.query.city).trim() : null;
     const statusFilter = req.query.status ? String(req.query.status).trim().toLowerCase() : 'all';
     const includeInactive = req.query.include_inactive === 'true' || statusFilter === 'inactive' || statusFilter === 'all';
@@ -133,10 +137,18 @@ matchingRouter.get('/listings', async (req: Request, res: Response) => {
       swiped.all.forEach((id) => excludedIds.add(id));
     }
 
-    // 1. Obtener inmuebles registrados en la base de datos real
+    // 1. REGLA ESTRICTA (Sección 3): Propietario o agencia SOLO ve sus propias propiedades en backend
     let dbListings = RentiaDB.getListings({
       city: cityFilter && cityFilter !== 'all' ? cityFilter : undefined,
+      landlordId: isLandlordOrAgency ? myId : undefined,
     });
+
+    if (isLandlordOrAgency) {
+      dbListings = dbListings.filter((l: any) =>
+        (myId && l.landlord_id === myId) ||
+        (myEmail && l.landlord_email && l.landlord_email.toLowerCase() === myEmail)
+      );
+    }
 
     // 2. Intentar combinar con Supabase si está disponible y configurado
     if (isSupabaseConfigured()) {
@@ -147,7 +159,9 @@ matchingRouter.get('/listings', async (req: Request, res: Response) => {
           .select('*, profiles:landlord_id(id, name, avatar_url, trust_score, is_active, role)')
           .order('created_at', { ascending: false });
 
-        if (!includeInactive) {
+        if (isLandlordOrAgency && myId) {
+          query = query.eq('landlord_id', myId);
+        } else if (!includeInactive) {
           query = query.eq('is_active', true);
         }
 
@@ -160,6 +174,8 @@ matchingRouter.get('/listings', async (req: Request, res: Response) => {
           const map = new Map<string, any>();
           dbListings.forEach(l => map.set(l.id, l));
           sbListings.forEach((sl: any) => {
+            // Filtrar estrictamente si es propietario
+            if (isLandlordOrAgency && sl.landlord_id !== myId) return;
             map.set(sl.id, {
               ...sl,
               landlord_name: (sl.profiles as any)?.name || sl.landlord_name,
@@ -174,6 +190,13 @@ matchingRouter.get('/listings', async (req: Request, res: Response) => {
     }
 
     const filtered = (dbListings || []).filter((l: any) => {
+      // SEGURIDAD PRIVACIDAD 3.1: Landlord/agencia nunca ve propiedades ajenas
+      if (isLandlordOrAgency) {
+        const isMine = (myId && l.landlord_id === myId) ||
+                       (myEmail && l.landlord_email && l.landlord_email.toLowerCase() === myEmail);
+        if (!isMine) return false;
+      }
+
       // Excluir pisos interactuados (con like o descartados)
       if (excludedIds.has(l.id)) {
         return false;
@@ -296,15 +319,32 @@ matchingRouter.get('/listings', async (req: Request, res: Response) => {
  * Activar o desactivar un anuncio con un solo botón (1-clic toggle)
  * También permite alternar entre 'available', 'rented' o 'inactive'
  */
-matchingRouter.post('/listings/:id/toggle', async (req: Request, res: Response) => {
+matchingRouter.post('/listings/:id/toggle', requireTenantAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { isActive, status } = req.body;
-    const updated = RentiaDB.toggleListingActive(id, isActive, status);
-    if (!updated) {
+    const listing = RentiaDB.getListingById(id);
+    if (!listing) {
       res.status(404).json({ error: 'Anuncio no encontrado' });
       return;
     }
+
+    // Comprobar propiedad en cada endpoint (403 si no es suya - Requisito 3.3)
+    const myId = req.tenant?.id;
+    const myEmail = req.tenant?.email?.toLowerCase();
+    const isOwner = (myId && listing.landlord_id === myId) ||
+                    (myEmail && listing.landlord_email && listing.landlord_email.toLowerCase() === myEmail);
+    const isAdmin = req.tenant?.role === 'admin';
+
+    if (!isOwner && !isAdmin) {
+      res.status(403).json({
+        error: 'No tienes permisos para modificar este anuncio (solo el propietario o agencia titular puede gestionarlo).',
+        code: 'FORBIDDEN_NOT_OWNER'
+      });
+      return;
+    }
+
+    const updated = RentiaDB.toggleListingActive(id, isActive, status);
     res.json({ success: true, listing: updated });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Error al alternar estado del anuncio.' });

@@ -41,7 +41,7 @@ import { ReportModal } from './ReportModal';
 import { TenantPhotoGate } from './TenantPhotoGate';
 import { SEED_LISTINGS } from '../data/seedListings';
 import { api } from '../api/client';
-import { TenantProfile } from '../types';
+import { TenantProfile, UserRole } from '../types';
 
 // Fix Leaflet's default marker icons in modern bundlers
 try {
@@ -89,7 +89,7 @@ const BASEMAP_LAYERS: Record<
   },
 };
 
-interface IdealistaMapSearchProps {
+interface PropertyMapSearchProps {
   language: Language;
   onLikeListing?: (listingId: string) => void;
   likedListingIds?: string[];
@@ -141,7 +141,7 @@ function isPointInPolygon(point: [number, number], vs: [number, number][]): bool
   return inside;
 }
 
-export const IdealistaMapSearch: React.FC<IdealistaMapSearchProps> = ({
+export const PropertyMapSearch: React.FC<PropertyMapSearchProps> = ({
   language,
   onLikeListing,
   likedListingIds = [],
@@ -559,9 +559,9 @@ export const IdealistaMapSearch: React.FC<IdealistaMapSearchProps> = ({
 
       const statusTag = isLandlord ? (isInactive ? ' (Pausa)' : isRented ? ' (Alquilada)' : '') : '';
 
-      // Marcador tipo píldora de Idealista
+      // Marcador tipo píldora de Rentia
       const iconHtml = `
-        <div class="idealista-marker-pin ${isSelected ? 'is-active' : ''} ${isLiked ? 'is-liked' : ''}" style="
+        <div class="rentia-marker-pin ${isSelected ? 'is-active' : ''} ${isLiked ? 'is-liked' : ''}" style="
           background-color: ${bg};
           color: ${textColor};
           border: ${border};
@@ -794,8 +794,8 @@ export const IdealistaMapSearch: React.FC<IdealistaMapSearchProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] w-full relative bg-stone-100 overflow-hidden" id="idealista-map-search-view">
-      {/* TOP CONTROL BAR (Idealista-style) */}
+    <div className="flex flex-col h-[calc(100vh-80px)] w-full relative bg-stone-100 overflow-hidden" id="property-map-search-view">
+      {/* TOP CONTROL BAR */}
       <div className="bg-white/95 backdrop-blur-md border-b border-stone-200 z-20 px-3 py-2.5 shadow-xs">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2.5">
           {/* Province selector & Proximity */}

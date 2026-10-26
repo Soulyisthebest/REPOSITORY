@@ -19,6 +19,7 @@ import {
   X
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { api } from '../api/client';
 import { TenantProfile } from '../types';
 import { Language, TRANSLATIONS } from '../i18n/translations';
 
@@ -66,10 +67,10 @@ export const PassportCard: React.FC<PassportCardProps> = ({
     });
   };
 
-  const passportNumber = tenant.passportNumber || (tenant.id ? `RNTA-ES-${tenant.id.substring(0, 4).toUpperCase()}` : '—');
-  const qrVerificationUrl = tenant.passportNumber || tenant.id
-    ? `https://rentiapassport.org/verify/${passportNumber}`
-    : 'https://rentiapassport.org';
+  const profileCode = tenant.passportNumber || (tenant.id ? `RNTA-${tenant.id.substring(0, 4).toUpperCase()}` : 'RNTA-VAL784');
+  const qrVerificationUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/p/${profileCode}`
+    : `https://rentia.es/p/${profileCode}`;
 
   const initialLetter = (tenant.fullName || tenant.firstName || t.guestUser).charAt(0).toUpperCase();
 
@@ -121,7 +122,7 @@ export const PassportCard: React.FC<PassportCardProps> = ({
               )}
             </div>
             <p className="text-xs text-stone-500 font-mono mt-0.5">
-              {tenant.passportNumber || tenant.id ? `N° ${passportNumber}` : t.noActiveSessionDesc}
+              {tenant.passportNumber || tenant.id ? `N° ${tenant.passportNumber || tenant.passportId || tenant.id}` : t.noActiveSessionDesc}
             </p>
           </div>
         </div>
@@ -208,7 +209,7 @@ export const PassportCard: React.FC<PassportCardProps> = ({
           <div className="p-2.5 bg-white rounded-xl border border-stone-200/60">
             <div className="flex items-center justify-between">
               <span className="block text-[10px] text-stone-400 font-bold uppercase">Nómina mensual</span>
-              {!visibleFields.salary && <EyeOff className="w-3 h-3 text-stone-300" title="Oculto en perfil público" />}
+              {!visibleFields.salary && <span title="Oculto en perfil público"><EyeOff className="w-3 h-3 text-stone-300" /></span>}
             </div>
             <span className="font-black text-[#1E1B4B]">
               {visibleFields.salary
@@ -220,7 +221,7 @@ export const PassportCard: React.FC<PassportCardProps> = ({
           <div className="p-2.5 bg-white rounded-xl border border-stone-200/60">
             <div className="flex items-center justify-between">
               <span className="block text-[10px] text-stone-400 font-bold uppercase">Trabajo / Contrato</span>
-              {!visibleFields.employment && <EyeOff className="w-3 h-3 text-stone-300" title="Oculto en perfil público" />}
+              {!visibleFields.employment && <span title="Oculto en perfil público"><EyeOff className="w-3 h-3 text-stone-300" /></span>}
             </div>
             <span className="font-bold text-[#1E1B4B] truncate block capitalize">
               {visibleFields.employment
@@ -232,7 +233,7 @@ export const PassportCard: React.FC<PassportCardProps> = ({
           <div className="p-2.5 bg-white rounded-xl border border-stone-200/60">
             <div className="flex items-center justify-between">
               <span className="block text-[10px] text-stone-400 font-bold uppercase">Avalista</span>
-              {!visibleFields.guarantor && <EyeOff className="w-3 h-3 text-stone-300" title="Oculto en perfil público" />}
+              {!visibleFields.guarantor && <span title="Oculto en perfil público"><EyeOff className="w-3 h-3 text-stone-300" /></span>}
             </div>
             <span className="font-bold text-[#1E1B4B]">
               {visibleFields.guarantor
@@ -244,7 +245,7 @@ export const PassportCard: React.FC<PassportCardProps> = ({
           <div className="p-2.5 bg-white rounded-xl border border-stone-200/60">
             <div className="flex items-center justify-between">
               <span className="block text-[10px] text-stone-400 font-bold uppercase">Mascotas</span>
-              {!visibleFields.pets && <EyeOff className="w-3 h-3 text-stone-300" title="Oculto en perfil público" />}
+              {!visibleFields.pets && <span title="Oculto en perfil público"><EyeOff className="w-3 h-3 text-stone-300" /></span>}
             </div>
             <span className="font-bold text-[#1E1B4B] truncate block">
               {visibleFields.pets
@@ -412,13 +413,34 @@ export const PassportCard: React.FC<PassportCardProps> = ({
               </label>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowConfigModal(false)}
-              className="w-full py-2.5 bg-[#1E1B4B] hover:bg-[#28235C] text-white rounded-xl text-xs font-bold transition-all"
-            >
-              Guardar preferencias de visibilidad
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await api.public.updateProfileVisibility({
+                      show_income: visibleFields.salary,
+                      show_employment: visibleFields.employment,
+                      show_guarantor: visibleFields.guarantor,
+                      show_pets: visibleFields.pets,
+                    });
+                  } catch {}
+                  setShowConfigModal(false);
+                }}
+                className="flex-1 py-2.5 bg-[#1E1B4B] hover:bg-[#28235C] text-white rounded-xl text-xs font-bold transition-all"
+              >
+                Guardar preferencias
+              </button>
+              <a
+                href={qrVerificationUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-[#1E1B4B] rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1"
+                title="Abrir y probar perfil público"
+              >
+                Probar QR
+              </a>
+            </div>
           </div>
         </div>
       )}

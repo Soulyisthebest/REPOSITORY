@@ -47,7 +47,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   selectedRole = 'tenant',
 }) => {
   const t = TRANSLATIONS[language];
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot_password'>(initialMode);
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot_password' | 'email_confirmation'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -56,6 +56,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Email Confirmation flow states (Requirement 1.5)
+  const [emailCode, setEmailCode] = useState('');
+  const [emailCountdown, setEmailCountdown] = useState(600);
+  const [emailDemoHint, setEmailDemoHint] = useState<string | null>(null);
+  const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
+  const [isResendingEmail, setIsResendingEmail] = useState(false);
+  const [pendingReg, setPendingReg] = useState<any>(null);
 
   // Separate role context for login and register
   const [loginRole, setLoginRole] = useState<'tenant' | 'landlord' | 'agency'>(
@@ -74,6 +82,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [otpDemoHint, setOtpDemoHint] = useState<string | null>(null);
   const [isRealSmsDelivered, setIsRealSmsDelivered] = useState<boolean | null>(null);
 
+  // Countdown timer for email 6-digit confirmation code
+  useEffect(() => {
+    let timer: any;
+    if (mode === 'email_confirmation' && emailCountdown > 0) {
+      timer = setInterval(() => {
+        setEmailCountdown((prev) => Math.max(0, prev - 1));
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [mode, emailCountdown]);
+
   useEffect(() => {
     setMode(initialMode);
     setError(null);
@@ -83,6 +102,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setOtpCode('');
     setOtpDemoHint(null);
     setIsRealSmsDelivered(null);
+    setEmailCode('');
+    setEmailDemoHint(null);
     if (selectedRole === 'agency') {
       setLoginRole('agency');
       setRegisterRole('agency');
@@ -224,6 +245,105 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const hasSymbol = /[!@#$%^&*()_+\-=\[\]{}|;:,.<>?~`\\/]/.test(password);
   const isPasswordStrong = hasMinLen && hasUpper && hasLower && hasNumber && hasSymbol;
 
+  // Reenviar código de confirmación de 6 dígitos
+  const handleResendEmail = async () => {
+    setError(null);
+    setIsResendingEmail(true);
+    try {
+      const res = await api.auth.resendEmailOtp({
+        email: email.trim().toLowerCase(),
+        lang: language,
+      });
+      setEmailCountdown(600);
+      if (res.demoCode) {
+        setEmailDemoHint(res.demoCode);
+      }
+      setSuccessMessage(
+        language === 'es'
+          ? '✓ Nuevo código de 6 dígitos enviado a tu correo.'
+          : '✓ New 6-digit confirmation code sent to your email.'
+      );
+    } catch (err: any) {
+      setError(err.message || 'Error al reenviar código.');
+    } finally {
+      setIsResendingEmail(false);
+    }
+  };
+
+  // Validar código de confirmación del email y acceso automático (Requisito 1.5)
+  const handleVerifyEmail = async (codeToVerify?: string) => {
+    const code = (codeToVerify || emailCode).trim();
+    if (!code || code.length < 6) {
+      setError(
+        language === 'es'
+          ? 'Por favor, introduce el código completo de 6 dígitos.'
+          : 'Please enter the complete 6-digit code.'
+      );
+      return;
+    }
+    if (emailCountdown <= 0) {
+      setError(
+        language === 'es'
+          ? 'El código de confirmación ha caducado. Pulsa en Reenviar código.'
+          : 'Confirmation code expired. Please click Resend code.'
+      );
+      return;
+    }
+
+    setError(null);
+    setIsVerifyingEmail(true);
+
+    try {
+      const verifyRes = await api.auth.verifyEmailOtp({
+        email: email.trim().toLowerCase(),
+        otp: code,
+        lang: language,
+      });
+
+      let token = verifyRes.token;
+      let userTenant = verifyRes.tenant;
+
+      // Si aún no se había persistido el registro completo, registrar ahora
+      if (!userTenant && pendingReg) {
+        const regRes = await api.auth.register(pendingReg);
+        token = regRes.token;
+        userTenant = regRes.tenant;
+      }
+
+      if (token) {
+        setAuthToken(token);
+        if (isClientSupabaseConfigured() && !token.startsWith('rentia_local_')) {
+          await supabase.auth
+            .setSession({ access_token: token, refresh_token: token })
+            .catch(() => {});
+        }
+      }
+
+      setSuccessMessage(
+        language === 'es'
+          ? '✓ ¡Correo electrónico confirmado con éxito! Entrando a tu cuenta...'
+          : '✓ Email confirmed successfully! Entering your account...'
+      );
+
+      // Entrada automática tras confirmar (Requisito 1.5)
+      setTimeout(() => {
+        if (userTenant) {
+          onAuthSuccess(userTenant);
+        }
+        onClose();
+      }, 700);
+    } catch (err: any) {
+      setError(
+        err.message ||
+          (language === 'es'
+            ? 'Código de confirmación incorrecto o caducado.'
+            : 'Incorrect or expired confirmation code.')
+      );
+    } finally {
+      setIsVerifyingEmail(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -287,8 +407,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onAuthSuccess(loginRes.tenant);
         onClose();
       } else {
-        // Registration with mandatory phone and strictly unique email & phone
-        const res = await api.auth.register({
+        // Flujo completo de confirmación de email (Requisito 1.5):
+        // Solicitar código de 6 dígitos y mostrar pantalla interactiva de confirmación
+        const regPayload = {
           name: name.trim(),
           email: email.trim().toLowerCase(),
           password,
@@ -297,22 +418,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           preferred_lang: language,
           privacy_policy_accepted: privacyAccepted,
           otp: otpCode.trim(),
+        };
+        setPendingReg(regPayload);
+
+        const otpRes = await api.auth.requestEmailOtp({
+          email: email.trim().toLowerCase(),
+          lang: language,
         });
 
-        if (res.token) {
-          setAuthToken(res.token);
-          if (isClientSupabaseConfigured() && !res.token.startsWith('rentia_local_')) {
-            await supabase.auth
-              .setSession({
-                access_token: res.token,
-                refresh_token: res.token,
-              })
-              .catch(() => {});
-          }
+        if (otpRes.demoCode) {
+          setEmailDemoHint(otpRes.demoCode);
         }
-
-        onAuthSuccess(res.tenant);
-        onClose();
+        setEmailCountdown(600);
+        setEmailCode('');
+        setMode('email_confirmation');
+        setSuccessMessage(
+          language === 'es'
+            ? `Hemos enviado un código de 6 dígitos a ${email.trim().toLowerCase()}`
+            : `We sent a 6-digit confirmation code to ${email.trim().toLowerCase()}`
+        );
       }
     } catch (err: any) {
       if (
@@ -431,6 +555,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           >
             {mode === 'forgot_password' ? (
               <KeyRound className="w-6 h-6 text-[#D97706]" />
+            ) : mode === 'email_confirmation' ? (
+              <Mail className="w-6 h-6 text-indigo-600" />
             ) : activeRole === 'agency' ? (
               <Briefcase className="w-6 h-6 text-indigo-700" />
             ) : activeRole === 'landlord' ? (
@@ -444,6 +570,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               ? t.login
               : mode === 'register'
               ? t.register
+              : mode === 'email_confirmation'
+              ? (language === 'es'
+                  ? 'Confirmar correo electrónico'
+                  : language === 'en'
+                  ? 'Verify email address'
+                  : 'Confirmer votre e-mail')
               : language === 'es'
               ? 'Recuperar contraseña'
               : 'Mot de passe oublié'}
@@ -457,6 +589,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               ? language === 'es'
                 ? `Crear cuenta de ${activeRole === 'agency' ? 'Agencia Inmobiliaria' : activeRole === 'landlord' ? 'Propietario Privado' : 'Inquilino'}`
                 : t.authRegisterSubtitle
+              : mode === 'email_confirmation'
+              ? (language === 'es'
+                  ? `Introduce el código de 6 dígitos que enviamos a ${email}`
+                  : language === 'en'
+                  ? `Enter the 6-digit code sent to ${email}`
+                  : `Entrez le code à 6 chiffres envoyé à ${email}`)
               : language === 'es'
               ? 'Introduce tu correo para recibir las instrucciones.'
               : 'Entrez votre email pour recevoir le lien.'}
@@ -464,7 +602,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         {/* Tab switcher: Iniciar sesión / Registrarse */}
-        {mode !== 'forgot_password' && (
+        {mode !== 'forgot_password' && mode !== 'email_confirmation' && (
           <div className="grid grid-cols-2 p-1 bg-stone-100 rounded-xl mb-4 text-xs font-bold">
             <button
               type="button"
@@ -502,7 +640,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         )}
 
         {/* EXCLUSIVE ROLE SELECTOR TAB (Separación estricta de bases de datos/logins) */}
-        {mode !== 'forgot_password' && (
+        {mode !== 'forgot_password' && mode !== 'email_confirmation' && (
           <div className="mb-4 p-1.5 rounded-2xl bg-stone-50 border border-stone-200">
             <div className="flex items-center justify-between px-1 mb-1">
               <span className="text-[10px] font-black uppercase tracking-wider text-stone-400">
@@ -628,6 +766,132 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </span>
             </button>
           </form>
+        ) : mode === 'email_confirmation' ? (
+          /* Flujo completo de confirmación de email (Requisito 1.5) */
+          <div className="space-y-4 text-xs" id="email-confirmation-view">
+            <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 text-center">
+              <p className="text-stone-600 mb-1">
+                {language === 'es'
+                  ? 'Hemos enviado un código de 6 dígitos a:'
+                  : language === 'en'
+                  ? 'We have sent a 6-digit verification code to:'
+                  : 'Nous avons envoyé un code à 6 chiffres à :'}
+              </p>
+              <p className="font-bold text-[#1E1B4B] text-sm break-all">{email}</p>
+            </div>
+
+            {emailDemoHint && (
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-center font-mono text-xs">
+                {language === 'es'
+                  ? `Código para pruebas: ${emailDemoHint}`
+                  : `Test verification code: ${emailDemoHint}`}
+              </div>
+            )}
+
+            <div>
+              <label className="block font-bold text-[#1E1B4B] mb-1.5 text-center">
+                {language === 'es'
+                  ? 'Introduce el código de 6 dígitos'
+                  : language === 'en'
+                  ? 'Enter the 6-digit code'
+                  : 'Entrez le code à 6 chiffres'}
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={emailCode}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+                  setEmailCode(val);
+                  if (val.length === 6) {
+                    handleVerifyEmail(val);
+                  }
+                }}
+                placeholder="······"
+                autoFocus
+                className="w-full py-3 text-center text-2xl font-mono font-black tracking-[0.5em] rounded-2xl border-2 border-indigo-200 focus:border-[#1E1B4B] bg-stone-50/60 text-[#1E1B4B] focus:outline-none transition-colors"
+                id="input-email-otp"
+              />
+            </div>
+
+            {/* Countdown timer & expiry notification */}
+            <div className="flex items-center justify-between text-[11px] px-1 font-medium">
+              <span className={emailCountdown > 60 ? 'text-stone-500' : 'text-red-600 font-bold animate-pulse'}>
+                {emailCountdown > 0
+                  ? (language === 'es'
+                      ? `Caduca en: ${Math.floor(emailCountdown / 60)}:${String(emailCountdown % 60).padStart(2, '0')}`
+                      : language === 'en'
+                      ? `Expires in: ${Math.floor(emailCountdown / 60)}:${String(emailCountdown % 60).padStart(2, '0')}`
+                      : `Expire dans : ${Math.floor(emailCountdown / 60)}:${String(emailCountdown % 60).padStart(2, '0')}`)
+                  : (language === 'es'
+                      ? 'Código caducado'
+                      : language === 'en'
+                      ? 'Code expired'
+                      : 'Code expiré')}
+              </span>
+
+              <button
+                type="button"
+                onClick={handleResendEmail}
+                disabled={isResendingEmail}
+                className="text-[#0FA3A3] hover:text-[#0D8B8B] font-bold underline transition-colors disabled:opacity-50"
+                id="btn-resend-email-otp"
+              >
+                {isResendingEmail
+                  ? (language === 'es' ? 'Reenviando...' : 'Envoi en cours...')
+                  : (language === 'es'
+                      ? 'Reenviar código'
+                      : language === 'en'
+                      ? 'Resend code'
+                      : 'Renvoyer le code')}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleVerifyEmail()}
+              disabled={isVerifyingEmail || emailCode.length < 6 || emailCountdown <= 0}
+              className="w-full py-3 rounded-2xl bg-[#1E1B4B] hover:bg-[#28235C] text-white font-bold text-xs shadow-md flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              id="btn-confirm-email-otp"
+            >
+              {isVerifyingEmail ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>
+                    {language === 'es' ? 'Verificando y accediendo...' : 'Vérification et accès...'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>
+                    {language === 'es'
+                      ? 'Confirmar y acceder'
+                      : language === 'en'
+                      ? 'Confirm and enter'
+                      : 'Confirmer et entrer'}
+                  </span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setMode('register');
+                setError(null);
+                setSuccessMessage(null);
+              }}
+              className="w-full text-center text-xs text-stone-500 font-semibold hover:text-[#1E1B4B] flex items-center justify-center gap-1 mt-2"
+            >
+              <ArrowLeft className="w-3 h-3" />
+              <span>
+                {language === 'es' ? 'Modificar datos de registro' : 'Modifier les données'}
+              </span>
+            </button>
+          </div>
         ) : (
           /* Form Login / Register */
           <form onSubmit={handleSubmit} className="space-y-3 text-xs">
